@@ -1,0 +1,333 @@
+"""
+Support Vector Regression (SVR)
+Transfer Learning for Mineral Prospectivity Mapping
+
+This script trains an SVR model using source-area training samples,
+evaluates predictive performance on a target-area validation dataset,
+and predicts mineral prospectivity for the entire target area.
+
+Expected input files
+--------------------
+Train.xlsx
+    Training samples from one or more source areas.
+
+Test.xlsx
+    Validation samples from the target area.
+
+F1.xlsx
+    Complete target-area dataset used for prospectivity prediction.
+
+Outputs
+-------
+F1_predictions.xlsx
+Feature_Importance.xlsx
+Prospectivity map
+
+Author: MohammadReza Samiei
+"""
+
+# ==================================================
+# Import required libraries
+# ==================================================
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.svm import SVR
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.metrics import (
+    mean_squared_error,
+    mean_absolute_error,
+    r2_score,
+)
+
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.ticker import FuncFormatter
+
+
+# ==================================================
+# Load datasets
+# ==================================================
+
+DATA_DIR = "data_sample"
+
+train_df = pd.read_excel(f"{DATA_DIR}/Train.xlsx")
+test_df = pd.read_excel(f"{DATA_DIR}/Test.xlsx")
+f1_data = pd.read_excel(f"{DATA_DIR}/F1.xlsx")
+
+print("Training dataset:")
+print(train_df.head())
+
+print("\nValidation dataset:")
+print(test_df.head())
+
+
+# ==================================================
+# Prepare training and validation datasets
+# ==================================================
+
+X_train = train_df.drop(columns=["Class"])
+y_train = train_df["Class"]
+
+X_test = test_df.drop(columns=["Class"])
+y_test = test_df["Class"]
+
+
+# ==================================================
+# Hyperparameter search space
+# ==================================================
+
+param_grid = {
+    "kernel": ["linear", "rbf", "poly"],
+    "C": [0.01, 0.1, 1, 10, 100],
+    "gamma": ["scale", "auto"],
+}
+
+# ==================================================
+# Train SVR model with Randomized Search
+# ==================================================
+
+svr = SVR()
+
+random_search = RandomizedSearchCV(
+    estimator=svr,
+    param_distributions=param_grid,
+    n_iter=10,
+    cv=5,
+    scoring="neg_mean_squared_error",
+    random_state=42,
+    verbose=1,
+)
+
+random_search.fit(X_train, y_train)
+
+best_model = random_search.best_estimator_
+
+print("\nBest hyperparameters:")
+print(random_search.best_params__)
+
+
+# ==================================================
+# Model evaluation
+# ==================================================
+
+y_pred = best_model.predict(X_test)
+
+r2 = r2_score(y_test, y_pred)
+mse = mean_squared_error(y_test, y_pred)
+rmse = np.sqrt(mse)
+mae = mean_absolute_error(y_test, y_pred)
+r = np.sqrt(r2)
+
+print("\nModel performance on the validation dataset")
+print("-------------------------------------------")
+print(f"R     : {r:.3f}")
+print(f"R²    : {r2:.3f}")
+print(f"MAE   : {mae:.3f}")
+print(f"MSE   : {mse:.3f}")
+print(f"RMSE  : {rmse:.3f}")
+
+
+# ==================================================
+# Prospectivity prediction for the target area
+# ==================================================
+
+X_f1 = f1_data.drop(columns=["X", "Y"])
+
+f1_predictions = best_model.predict(X_f1)
+
+f1_data["Prediction"] = f1_predictions
+
+
+# ==================================================
+# Save prediction results
+# ==================================================
+
+import os
+
+os.makedirs("outputs", exist_ok=True)
+
+f1_data.to_excel(
+    "outputs/F1_predictions.xlsx",
+    index=False,
+)
+
+print("\nPrediction results were successfully saved.")
+
+
+# ==================================================
+# Prospectivity map
+# ==================================================
+
+plt.figure(figsize=(8,6))
+
+plt.scatter(
+    f1_data["X"],
+    f1_data["Y"],
+    c=f1_predictions,
+    cmap="viridis",
+)
+
+plt.colorbar(label="Predicted prospectivity")
+
+plt.xlabel("X Coordinate")
+plt.ylabel("Y Coordinate")
+plt.title("Transfer Learning Prospectivity Map")
+
+plt.tight_layout()
+
+plt.savefig(
+    "outputs/prospectivity_map.png",
+    dpi=300,
+)
+
+plt.show()
+
+
+# ==================================================
+# Permutation Feature Importance
+# ==================================================
+
+def permutation_feature_importance(model, X):
+
+    baseline_prediction = model.predict(X)
+
+    baseline_mse = mean_squared_error(
+        baseline_prediction,
+        baseline_prediction,
+    )
+
+    feature_importance = []
+
+    for feature in X.columns:
+
+        shuffled = X.copy()
+
+        shuffled[feature] = np.random.permutation(
+            shuffled[feature]
+        )
+
+        shuffled_prediction = model.predict(shuffled)
+
+        shuffled_mse = mean_squared_error(
+            baseline_prediction,
+            shuffled_prediction,
+        )
+
+        feature_importance.append(
+            (
+                feature,
+                shuffled_mse - baseline_mse,
+            )
+        )
+
+    feature_importance = sorted(
+        feature_importance,
+        key=lambda x: abs(x[1]),
+        reverse=True,
+    )
+
+    return feature_importance
+
+# ==================================================
+# Feature importance analysis
+# ==================================================
+
+feature_impact = permutation_feature_importance(
+    best_model,
+    X_f1,
+)
+
+impact_df = pd.DataFrame(
+    feature_impact,
+    columns=["Feature", "Impact"],
+)
+
+print("\nPermutation Feature Importance")
+print("--------------------------------")
+print(impact_df)
+
+
+# ==================================================
+# Save feature importance table
+# ==================================================
+
+impact_df.to_excel(
+    "outputs/Feature_Importance.xlsx",
+    index=False,
+)
+
+
+# ==================================================
+# Plot feature importance
+# ==================================================
+
+features = impact_df["Feature"]
+importances = impact_df["Impact"]
+
+
+# Red color gradient
+cmap = LinearSegmentedColormap.from_list(
+    "red_gradient",
+    ["#ffcccc", "#ff0000"],
+    N=len(features),
+)
+
+colors = [
+    cmap(i / (len(features) - 1))
+    for i in range(len(features) - 1, -1, -1)
+]
+
+
+plt.figure(figsize=(8,6))
+
+plt.barh(
+    features,
+    importances,
+    color=colors,
+    edgecolor="black",
+)
+
+plt.grid(
+    axis="x",
+    linestyle="--",
+    alpha=0.7,
+)
+
+plt.xlabel(
+    "Impact on Prediction Error (MSE)",
+    fontsize=13,
+)
+
+plt.ylabel(
+    "Features",
+    fontsize=13,
+)
+
+plt.title(
+    "Permutation Feature Importance",
+    fontsize=15,
+)
+
+formatter = FuncFormatter(
+    lambda x, _: f"{x:.3f}"
+)
+
+plt.gca().xaxis.set_major_formatter(formatter)
+
+plt.tight_layout()
+
+plt.savefig(
+    "outputs/Feature_Importance.png",
+    dpi=300,
+)
+
+plt.show()
+
+
+print("\nOutputs generated successfully:")
+print(" - outputs/F1_predictions.xlsx")
+print(" - outputs/prospectivity_map.png")
+print(" - outputs/Feature_Importance.xlsx")
+print(" - outputs/Feature_Importance.png")
