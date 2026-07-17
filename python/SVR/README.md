@@ -35,3 +35,19 @@ The script is flexible and can be applied to different transfer learning scenari
 - Target-area training samples only (conventional machine learning without transfer learning)
 
 In all cases, **Test.xlsx** should contain validation samples from the target area, while **F1.xlsx** should contain the complete predictor dataset for the target area to be mapped.
+## Running the script
+
+This script was originally developed in Google Colab.
+
+The sample datasets (`Train.xlsx`, `Test.xlsx`, and `F1.xlsx`) are available in the `data_sample` folder of this repository.
+
+To reproduce the example:
+
+1. Download the sample datasets from the `data_sample` folder.
+2. Upload them to your own Google Drive.
+3. Update the `base_path` variable in the script to match the location of your files.
+4. Run the script.
+
+The same workflow can also be used with any custom dataset by replacing the sample files with your own `Train.xlsx`, `Test.xlsx`, and `F1.xlsx` datasets.
+
+For transfer learning experiments, the `Train.xlsx` file should contain the training samples from the selected source area(s), whereas `Test.xlsx` should contain the validation samples from the target area. The `F1.xlsx` file represents the target area where prospectivity predictions are generated.
