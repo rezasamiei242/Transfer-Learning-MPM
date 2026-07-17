@@ -1,0 +1,254 @@
+"""
+Artificial Neural Network (ANN-MLP) base learner
+------------------------------------------------
+This script trains an MLP regressor, performs hyperparameter tuning,
+and evaluates predictive performance under a transfer learning framework
+for mineral prospectivity mapping.
+
+Author: MohammadReza Samiei
+"""
+
+# --------------------------------------------------
+# Import libraries
+# --------------------------------------------------
+import numpy as np
+import pandas as pd
+
+from sklearn.neural_network import MLPRegressor
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import (
+    r2_score,
+    mean_absolute_error,
+    mean_squared_error,
+)
+
+# --------------------------------------------------
+# 1. Load datasets
+# --------------------------------------------------
+train_df = pd.read_excel("data/Train.xlsx")
+test_df = pd.read_excel("data/Test.xlsx")
+f1_df = pd.read_excel("data/F1.xlsx")
+
+# --------------------------------------------------
+# 2. Prepare training and test datasets
+# --------------------------------------------------
+X_train = train_df.drop(columns=["Class"])
+y_train = train_df["Class"]
+
+X_test = test_df.drop(columns=["Class"])
+y_test = test_df["Class"]
+
+print(f"Training samples: {len(train_df)}")
+print(f"Testing samples : {len(test_df)}")
+
+# --------------------------------------------------
+# 3. Hyperparameter tuning
+# --------------------------------------------------
+mlp = MLPRegressor(
+    max_iter=500,
+    random_state=42
+)
+
+param_grid = {
+    "hidden_layer_sizes": [(50, 50), (100, 100)],
+    "activation": ["relu", "tanh"],
+    "solver": ["adam", "sgd"],
+    "alpha": [0.0001, 0.001, 0.01],
+    "learning_rate": ["constant", "adaptive"],
+}
+
+grid_search = GridSearchCV(
+    estimator=mlp,
+    param_grid=param_grid,
+    cv=5,
+    scoring="r2",
+    verbose=1,
+)
+
+print("Training ANN model...")
+grid_search.fit(X_train, y_train)
+
+best_model = grid_search.best_estimator_
+
+print("\nBest hyperparameters:")
+print(grid_search.best_params_)
+
+# --------------------------------------------------
+# 4. Model evaluation
+# --------------------------------------------------
+y_test_pred = best_model.predict(X_test)
+
+r2 = r2_score(y_test, y_test_pred)
+mse = mean_squared_error(y_test, y_test_pred)
+rmse = np.sqrt(mse)
+mae = mean_absolute_error(y_test, y_test_pred)
+r = np.sqrt(r2)
+
+print("\nEvaluation metrics:")
+print(f"R    : {r:.3f}")
+print(f"R²   : {r2:.3f}")
+print(f"MSE  : {mse:.3f}")
+print(f"RMSE : {rmse:.3f}")
+print(f"MAE  : {mae:.3f}")
+
+# --------------------------------------------------
+# 5. Prospectivity prediction for the target area
+# --------------------------------------------------
+import matplotlib.pyplot as plt
+
+X_f1 = f1_df.drop(columns=["X", "Y"])
+
+f1_predictions = best_model.predict(X_f1)
+
+f1_df["ANN_Prediction"] = f1_predictions
+
+# Save prediction results
+f1_df.to_excel(
+    "outputs/F1_ANN_predictions.xlsx",
+    index=False
+)
+
+print("Prospectivity predictions saved successfully.")
+
+# --------------------------------------------------
+# 6. Spatial visualization
+# --------------------------------------------------
+plt.figure(figsize=(8, 6))
+
+plt.scatter(
+    f1_df["X"],
+    f1_df["Y"],
+    c=f1_predictions,
+    cmap="viridis",
+    s=20
+)
+
+plt.colorbar(label="ANN prediction")
+
+plt.xlabel("X coordinate")
+plt.ylabel("Y coordinate")
+plt.title("ANN-based prospectivity map")
+
+plt.tight_layout()
+
+plt.savefig(
+    "outputs/ANN_prospectivity_map.png",
+    dpi=300
+)
+
+plt.show()
+
+# --------------------------------------------------
+# 7. Permutation-based feature importance analysis
+# --------------------------------------------------
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.ticker import FuncFormatter
+
+
+def permutation_feature_importance(model, features):
+    """
+    Estimate feature importance by randomly shuffling
+    each predictor and measuring the increase in prediction error.
+    """
+
+    baseline_prediction = model.predict(features)
+    baseline_mse = mean_squared_error(
+        baseline_prediction,
+        baseline_prediction
+    )
+
+    impacts = []
+
+    for column in features.columns:
+
+        shuffled = features.copy()
+        shuffled[column] = np.random.permutation(shuffled[column])
+
+        shuffled_prediction = model.predict(shuffled)
+
+        shuffled_mse = mean_squared_error(
+            baseline_prediction,
+            shuffled_prediction
+        )
+
+        impacts.append(
+            (column, shuffled_mse - baseline_mse)
+        )
+
+    return sorted(
+        impacts,
+        key=lambda x: abs(x[1]),
+        reverse=True
+    )
+
+
+# Calculate feature impacts
+feature_impacts = permutation_feature_importance(
+    best_model,
+    X_f1
+)
+
+impact_df = pd.DataFrame(
+    feature_impacts,
+    columns=["Feature", "Impact"]
+)
+
+# Save table
+impact_df.to_excel(
+    "outputs/Feature_Importance.xlsx",
+    index=False
+)
+
+print(impact_df)
+
+
+# --------------------------------------------------
+# 8. Feature importance plot
+# --------------------------------------------------
+features = impact_df["Feature"]
+impacts = impact_df["Impact"]
+
+cmap = LinearSegmentedColormap.from_list(
+    "red_gradient",
+    ["#ffcccc", "#ff0000"],
+    N=len(features)
+)
+
+colors = [
+    cmap(i / (len(features) - 1))
+    for i in range(len(features) - 1, -1, -1)
+]
+
+plt.figure(figsize=(8, 6))
+
+plt.barh(
+    features,
+    impacts,
+    color=colors,
+    edgecolor="black"
+)
+
+plt.grid(
+    axis="x",
+    linestyle="--",
+    alpha=0.7
+)
+
+plt.xlabel("Impact on Prediction Error (MSE)")
+plt.ylabel("Features")
+plt.title("Permutation Feature Importance (ANN)")
+
+formatter = FuncFormatter(
+    lambda x, _: f"{x:.3f}"
+)
+
+plt.gca().xaxis.set_major_formatter(formatter)
+
+plt.tight_layout()
+
+plt.savefig(
+    "outputs/Feature_Importance.png",
+    dpi=300
+)
+
+plt.show()
